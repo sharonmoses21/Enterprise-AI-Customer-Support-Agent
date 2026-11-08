@@ -1,138 +1,198 @@
-# Enterprise AI Customer Support Agent
+# HelpPilot
 
-An AI-powered customer support system designed to automate customer interactions, retrieve accurate information from enterprise knowledge bases, and manage multi-step support workflows using Large Language Models (LLMs).
+**A customer-support agent that investigates on its own, but asks a human before it does anything irreversible.**
 
-The system combines **LangGraph, Retrieval-Augmented Generation (RAG), and human-in-the-loop approval** to support reliable, context-aware customer assistance.
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C)
+![Groq](https://img.shields.io/badge/Groq-gpt--oss-F55036)
+![Chroma](https://img.shields.io/badge/RAG-Chroma%20%2B%20reranker-4B32C3)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-## Key Features
+It reads a customer message, looks up their order, searches the help docs, and writes
+a reply that is backed by those docs. When it wants to do something sensitive — like
+give a refund — it stops and waits for a human to approve. Every run is one trace in
+LangSmith.
 
-- **AI-Powered Customer Support:** Handles customer inquiries using conversational AI.
-- **Retrieval-Augmented Generation (RAG):** Retrieves relevant information from company policies, FAQs, and knowledge documents.
-- **Agentic Workflow Orchestration:** Uses LangGraph to coordinate multi-step support operations.
-- **Context-Aware Responses:** Maintains conversation context across customer interactions.
-- **Order Management:** Supports order-status lookups through integrated tools.
-- **Human-in-the-Loop Approval:** Escalates sensitive operations, including refunds, for human review.
-- **Tool Integration:** Connects AI agents with external APIs and business services.
-- **Error Handling:** Supports controlled escalation when requests cannot be resolved automatically.
-- **Evaluation:** Enables testing of response quality, retrieval accuracy, and workflow reliability.
+I built this to learn how to design an agent that is **safe and easy to follow**, not
+just one that answers questions.
 
-## Technology Stack
+![correct](https://img.shields.io/badge/correct-86.7%25-brightgreen)
+![grounded](https://img.shields.io/badge/grounded-100%25-brightgreen)
+![refunds approved first](https://img.shields.io/badge/no%20refund%20without%20approval-100%25-brightgreen)
+![cost](https://img.shields.io/badge/cost-~%240.0008%2Fticket-blue)
 
-| Component | Technology |
-|---|---|
-| Programming Language | Python |
-| Agent Framework | LangGraph |
-| LLM Integration | LangChain |
-| Knowledge Retrieval | RAG |
-| Data Validation | Pydantic |
-| API Integration | REST APIs |
-| Model Evaluation | LLM Evaluation Framework |
+### Highlights
 
-## System Architecture
+- **5-node LangGraph** — triage → solver → approval → reviewer → respond.
+- **Human in the loop** — refunds pause on a durable SQLite checkpoint and resume only
+  when a person approves, even from a different screen or process.
+- **Real RAG** — Chroma vector search + a cross-encoder reranker, with citations.
+- **Grounding gate** — a separate reviewer model blocks any reply the docs don't support.
+- **Tested** — a 30-ticket eval with LLM-as-judge and a hard "no refund without approval" rule.
 
-```text
-       Customer Inquiry
-              |
-              v
-       AI Support Agent
-              |
-              v
-      Intent Identification
-              |
-       +------+------+
-       |             |
-       v             v
- Knowledge Base   External Tools
-  RAG Retrieval    Order Lookup
-       |             |
-       +------+------+
-              |
-              v
-       Response Generation
-              |
-              v
-        Risk Assessment
-              |
-       +------+------+
-       |             |
-       v             v
-  Safe Response   Human Approval
-       |             |
-       +------+------+
-              |
-              v
-       Customer Response
+The graph below is rendered by LangGraph itself (solid = fixed edges, dotted =
+conditional routing — triage can skip to respond for escalations, and reviewer can
+loop back to the solver):
+
+<p align="center">
+  <img src="docs/langgraph.png" alt="HelpPilot LangGraph flow" width="210">
+</p>
+
+## What it does
+
+Ask it *"my package never arrived, order ORD-5001"* and it will:
+
+1. decide the message needs tools (triage),
+2. look up the order and tracking, find it is lost, read the refund policy (solver),
+3. draft a refund and **pause for a human to approve it** (approval),
+4. check the reply is backed by the docs and has citations (reviewer),
+5. send the reply and save everything (respond).
+
+## The 5 steps
+
+| Step | Uses an LLM? | What it is for |
+|------|------|----------------|
+| **triage** | yes (small model) | Sort the message: simple answer, use tools, or send to a human. A cheap first pass. |
+| **solver** | yes (big model) | The main worker. Searches docs, calls tools, and *proposes* a reply and any action. It only drafts refunds — it never sends money. |
+| **approval** | no | Stops the run when a refund is proposed and waits for a person to approve or reject. |
+| **reviewer** | yes (big model) | Last check before sending: is the reply supported by the docs and cited? If not, it sends the work back to the solver (up to 2 times). |
+| **respond** | no | Cleans up: remove personal data, add citations, save to the database, send. |
+
+3 of the 5 steps use an LLM. Only 2 of them — solver and reviewer — use the big
+model to do real reasoning; triage uses a small model for a quick sort. The other
+two steps (approval and respond) are plain, predictable code. That keeps the agent
+easy to trust and easy to read.
+
+## Two people, not one
+
+A customer should never approve their own refund, and they should not have to wait.
+So the agent works like a real support team:
+
+- The **customer** chats. When the agent proposes a refund, the customer just sees
+  *"a specialist is reviewing this, we'll get back to you."* The chat ends there.
+- A **staff member** opens a separate view with a queue of pending refunds. They see
+  what the agent proposed and click Approve or Reject.
+- When staff decide, the answer is sent back to the customer.
+
+```mermaid
+sequenceDiagram
+    actor C as Customer
+    participant A as Agent
+    participant Q as Approval queue
+    actor S as Staff
+    C->>A: "my package never arrived"
+    A->>A: look up order, check policy, draft refund
+    A-->>Q: interrupt() — refund pending, run paused to SQLite
+    A-->>C: "a specialist is reviewing, we'll follow up"
+    Note over C: not blocked — the chat ends here
+    S->>Q: opens the queue, reads the AI's draft
+    S->>A: Approve — resume the same thread
+    A->>A: issue refund → review → finalize
+    A-->>C: "your refund is approved"
 ```
 
-## Example Use Cases
+This is possible because of LangGraph's `interrupt()`. It saves the whole run to a
+SQLite file and stops. Later, a call to `resume_turn(thread_id, approved=...)` picks
+it up from the exact same place — even from a different screen or process. Nothing is
+lost and nobody is blocked.
 
-**1. Product Information**
+In the demo, both roles are in one app behind a sidebar switch, so you can try both
+sides yourself.
 
-Customer: "What is your return policy?"
+## RAG (searching the docs)
 
-The agent retrieves relevant policy information and generates a grounded response.
+The document search is real (only the order/tracking data is fake):
 
-**2. Order Tracking**
+1. About 8 policy documents are split into chunks and stored in Chroma.
+2. A query pulls the 8 closest chunks.
+3. A cross-encoder reranks them and keeps the best 3. This model reads the question
+   and the passage together, so it is more accurate than plain similarity.
+4. Each chunk keeps its id, which becomes a citation like `[refund-policy]`.
 
-Customer: "Where is my order?"
-
-The agent uses an integrated order-management tool to retrieve order information.
-
-**3. Refund Requests**
-
-Customer: "I want a refund for my purchase."
-
-The agent evaluates the request, retrieves relevant policy information, and routes sensitive refund actions for human approval.
-
-## Getting Started
-
-### 1. Clone the Repository
+You can try the search on its own:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/Enterprise-AI-Customer-Support-Agent.git
-cd Enterprise-AI-Customer-Support-Agent
+python -m helppilot.rag "my package never arrived, can I get a refund?"
 ```
 
-### 2. Install Dependencies
+## Tech
+
+- **LangGraph** for the agent, with a SQLite checkpointer for the pause/resume.
+- **Groq** for the models (`gpt-oss-20b` for triage, `gpt-oss-120b` for solving and review).
+- **Chroma** + a **cross-encoder reranker** for search.
+- **SQLite** for the data (customers, orders, tickets, logs, approvals).
+- **Streamlit** for the UI.
+- **LangSmith** for tracing.
+
+## Run it
+
+You need Python 3.11+ and a [Groq API key](https://console.groq.com/keys).
+A [LangSmith](https://smith.langchain.com/) key is optional (it adds tracing).
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# install
+uv sync                          # or: pip install -r requirements.txt
+
+# add your keys
+cp .env.example .env             # then paste your GROQ_API_KEY
+
+# load the sample data and build the search index
+uv run python -m helppilot.seed
+
+# start the app
+uv run streamlit run app.py
 ```
 
-### 3. Configure Environment
+Then, in the app:
 
-Create a `.env` file and configure the API keys required by your implementation.
+1. As **Customer** (Alice), type *"my package never arrived, order ORD-5001"*.
+2. Switch to **Staff** in the sidebar and approve the refund.
+3. Switch back to **Customer** to see the result.
 
-```env
-LLM_API_KEY=your_api_key
+## Evaluation
+
+`python eval.py` runs about 30 test tickets through the agent and checks:
+
+- is the answer correct (judged by an LLM),
+- is it grounded in the retrieved docs,
+- does it escalate the right cases,
+- and one strict rule: **no refund is ever sent without approval.**
+
+It also measures latency and estimated cost, prints a table, and writes the result
+to `EVAL_RESULTS.md`.
+
+Last run (30 tickets):
+
+| Metric | Result |
+|--------|--------|
+| Correctness (LLM judge) | **86.7%** |
+| Groundedness (LLM judge) | **100%** |
+| Escalation correctness | **100%** |
+| No refund without approval | **100%** |
+| Avg latency / ticket | ~16s |
+| Cost / ticket | ~$0.0008 |
+
+The few correctness misses were still grounded and safe — I chose not to tune the
+prompts to the test set. See [`EVAL_RESULTS.md`](EVAL_RESULTS.md) for the full table.
+
+## Project structure
+
+```
+app.py                 Streamlit UI (customer chat + staff approval queue)
+eval.py                evaluation script
+helppilot/
+  config.py            model names, paths, tracing setup
+  db.py                SQLite schema and helpers
+  seed.py              load sample data + build the search index
+  kb_docs.py           the policy/FAQ documents
+  rag.py               search + rerank + citations
+  tools.py             the agent's tools (order lookup, refund, etc.)
+  graph.py             the 5-step LangGraph
+  eval_dataset.py      the test tickets
 ```
 
-### 4. Run the Application
+## What I left out (on purpose)
 
-Follow the application's entry-point instructions to launch the support agent.
-
-## Evaluation and Reliability
-
-The system is designed to support evaluation across several dimensions:
-
-- **Response Accuracy:** Correctness of generated customer responses.
-- **Retrieval Quality:** Relevance of retrieved knowledge-base documents.
-- **Tool Execution Success:** Reliability of external API interactions.
-- **Escalation Accuracy:** Correct identification of requests requiring human intervention.
-- **Response Latency:** Time required to process customer inquiries.
-
-Evaluation results should be reported using reproducible test cases rather than assumed performance figures.
-
-## Future Improvements
-
-- Multilingual customer support
-- CRM and ticketing-system integrations
-- Advanced conversation memory
-- Automated support-ticket classification
-- Agent performance monitoring dashboard
-
-## License
-
-Refer to the original repository's license for applicable reuse and redistribution conditions.
+To keep the project small and clear, I did not build: email/Slack channels, hybrid
+search, background workers, billing, teams, or login. These would add size without
+making the core agent easier to understand.
