@@ -1,0 +1,10 @@
+[
+  {
+    "title": "Sample return policy (replace before production)",
+    "content": "Demonstration policy: unused items may be returned within 30 days of delivery. Contact support with the order number to start a return. Refunds require human review."
+  },
+  {
+    "title": "Sample shipping FAQ (replace before production)",
+    "content": "For this demonstration, standard shipping generally takes 3 to 5 business days. Customers can request an order status lookup using their order number."
+  }
+]
