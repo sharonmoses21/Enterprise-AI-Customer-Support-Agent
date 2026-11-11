@@ -1,4 +1,5 @@
-# HelpPilot
+
+Enterprise-AI-Customer-Support-Agent
 
 **A customer-support agent that investigates on its own, but asks a human before it does anything irreversible.**
 
@@ -6,7 +7,6 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C)
 ![Groq](https://img.shields.io/badge/Groq-gpt--oss-F55036)
 ![Chroma](https://img.shields.io/badge/RAG-Chroma%20%2B%20reranker-4B32C3)
-![License](https://img.shields.io/badge/License-MIT-green)
 
 It reads a customer message, looks up their order, searches the help docs, and writes
 a reply that is backed by those docs. When it wants to do something sensitive — like
